@@ -55,3 +55,20 @@ It finds the spot in `Camera_Update` right after the camera reads its target pos
 
 - `camerareforged.py` — GUI application (entry point)
 - `patcher.py` — patching engine (no UI)
+
+## Automated Releases
+
+This project is configured with GitHub Actions to build and publish releases automatically.
+
+To create a new release:
+1. Tag your latest commit with a version number starting with `v` (e.g., `v1.0.0`):
+   ```bash
+   git tag v1.0.0
+   ```
+2. Push the tag to GitHub:
+   ```bash
+   git push origin v1.0.0
+   ```
+
+GitHub Actions will automatically trigger, build the standalone executable (`CameraReforged.exe`) using PyInstaller on a Windows runner, and attach it as a release asset under a new GitHub Release.
+
