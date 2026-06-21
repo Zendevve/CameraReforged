@@ -140,19 +140,62 @@ def build_cave(cave_va, height_add):
 
 def main():
     if len(sys.argv) < 2:
-        print("WoW 3.3.5a Camera Height Offset Patcher")
-        print(f"Usage: {sys.argv[0]} <WoW.exe> [--apply]")
-        print(f"       {sys.argv[0]} <WoW.exe> --set-height <value>")
-        print()
-        print(f"  Raises camera target position by {HEIGHT_ADD} yards.")
-        print("  Dry-run by default; pass --apply to write changes.")
-        print()
-        print("  --set-height permanently rewrites the baked-in default on an")
-        print("  already-patched exe (close WoW first). Use this to keep a")
-        print("  value you liked from the live adjuster across game restarts.")
-        sys.exit(1)
+        # Auto-detect WoW.exe in the same directory as the patcher
+        script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        auto_path = os.path.join(script_dir, 'WoW.exe')
 
-    exe_path = sys.argv[1]
+        if os.path.isfile(auto_path):
+            print("WoW 3.3.5a Camera Height Offset Patcher")
+            print(f"  Found: {auto_path}")
+            print()
+
+            # Quick check: already patched?
+            with open(auto_path, 'rb') as f:
+                data = bytearray(f.read())
+            image_base, sections = parse_pe(data)
+            patch_off = va_to_offset(PATCH_VA, sections, image_base)
+            actual = bytes(data[patch_off:patch_off + len(ORIGINAL_BYTES)])
+
+            if actual == ORIGINAL_BYTES:
+                print("  Status: NOT YET PATCHED")
+                print(f"  Ready to raise camera target by {HEIGHT_ADD} yards.")
+                print()
+                choice = input("  Apply patch now? (Y/N): ").strip()
+                if choice.upper() not in ('Y', 'YES'):
+                    print("\n  No changes made.")
+                    return
+                exe_path = auto_path
+                apply = True
+            elif actual[:1] == b'\xE9':
+                cave_va = find_existing_cave_va(data, sections, image_base)
+                if cave_va:
+                    height_va = cave_va + 23
+                    height_off = va_to_offset(height_va, sections, image_base)
+                    cur_height = struct.unpack_from('<f', data, height_off)[0]
+                    print(f"  Status: ALREADY PATCHED (height offset: {cur_height:+.3f} yards)")
+                else:
+                    print("  Status: ALREADY PATCHED")
+                print()
+                print("  To change the height offset, run from command line:")
+                print(f"    CameraReforged.exe WoW.exe --set-height <value>")
+                print()
+                print("  To revert: delete WoW.exe and rename WoW.exe.bak")
+                return
+            else:
+                print("  Status: UNKNOWN — patch site has unexpected bytes.")
+                print("  This may be the wrong WoW version (need 3.3.5a).")
+                return
+        else:
+            print("WoW 3.3.5a Camera Height Offset Patcher")
+            print()
+            print("  WoW.exe was not found in the same folder as this patcher.")
+            print("  Place CameraReforged.exe next to your WoW.exe and")
+            print("  double-click it again, or drag WoW.exe onto it.")
+            print()
+            print(f"  Looked in: {script_dir}")
+            return
+
+    exe_path = sys.argv[1] if len(sys.argv) >= 2 else None
     apply    = '--apply' in sys.argv
 
     if '--set-height' in sys.argv:
