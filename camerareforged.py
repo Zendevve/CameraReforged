@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 import os
 import sys
+import webbrowser
 
 import patcher
 
@@ -38,7 +39,7 @@ class CameraReforgedApp:
         self.root.resizable(False, False)
 
         # Centre on screen
-        w, h = 560, 620
+        w, h = 560, 650
         x = (self.root.winfo_screenwidth()  - w) // 2
         y = (self.root.winfo_screenheight() - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
@@ -201,6 +202,25 @@ class CameraReforgedApp:
         self.log_text.tag_configure("warning", foreground=AMBER)
         self.log_text.tag_configure("error",   foreground=RED)
 
+        # ── Footer / Support ──
+        footer = tk.Frame(main, bg=BG_DARK)
+        footer.pack(fill="x", pady=(12, 0))
+
+        support_label = tk.Label(
+            footer, text="Crafted for the community. If CameraReforged made Azeroth feel more immersive, support is always appreciated! ☕",
+            font=("Segoe UI", 8, "italic"), fg=FG_DIM, bg=BG_DARK, justify="left", anchor="w",
+            wraplength=380
+        )
+        support_label.pack(side="left", anchor="w")
+
+        support_btn = tk.Button(
+            footer, text="☕ Support", font=("Segoe UI", 9, "bold"),
+            fg="#000000", bg="#FFDD00", activebackground="#ffea5c",
+            activeforeground="#000000", bd=0, padx=12, pady=5,
+            cursor="hand2", command=self._open_donation
+        )
+        support_btn.pack(side="right", anchor="e")
+
         self._update_buttons()
 
     # ── Logging ─────────────────────────────────────────────────────────
@@ -342,6 +362,10 @@ class CameraReforgedApp:
             self._load_exe(self.exe_path)  # Refresh status
         except Exception as e:
             self._log(f"Restore failed: {e}", "error")
+
+    def _open_donation(self):
+        webbrowser.open("https://buymeacoffee.com/zendevve")
+        self._log("Opening support link in browser. Thank you for your support! ❤️", "success")
 
 
 def main():

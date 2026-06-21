@@ -72,3 +72,14 @@ To create a new release:
 
 GitHub Actions will automatically trigger, build the standalone executable (`CameraReforged.exe`) using PyInstaller on a Windows runner, and attach it as a release asset under a new GitHub Release.
 
+## Support the Project ☕
+
+CameraReforged was built to solve a simple but frustrating problem: WoW's default camera focusing on your character's chest instead of their head, ruining the sense of immersion in Azeroth. I spent hours reverse-engineering assembly offsets, designing a safe byte-patching engine, and building this dark-themed GUI so you can fix it with a single click.
+
+This tool is entirely free, open-source, and free of any ads or tracking. 
+
+If this patcher has made your daily raids, dungeon runs, or leveling adventures more enjoyable, **consider buying me a coffee**. A small token of appreciation goes a long way in supporting the time spent maintaining and updating this project!
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/zendevve)
+
+
