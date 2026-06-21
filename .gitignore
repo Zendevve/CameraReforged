@@ -1,0 +1,15 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Portable Python cache (auto-downloaded by batch launcher)
+python_portable/
+python_portable.zip
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Backup files created by the patcher
+*.bak
