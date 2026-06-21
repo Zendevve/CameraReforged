@@ -1,18 +1,27 @@
 # CameraReforged
 
-A tiny binary patcher for **WoW 3.3.5a** that raises the camera's target height, so the camera looks at a point closer to head height instead of the chest. Drag, drop, done.
+A portable binary patcher for **WoW 3.3.5a** that raises the camera's target height, so the camera looks at a point closer to head height instead of the chest. No installation required — just a single `.exe`.
 
 ## Usage
 
 1. Download `CameraReforged.exe` from the [Releases](https://github.com/Zendevve/CameraReforged/releases) page.
-2. Drag your `WoW.exe` onto `CameraReforged.exe`.
-3. A console window runs the patch and pauses so you can read the result.
+2. Place it in the same folder as your `WoW.exe`.
+3. Double-click `CameraReforged.exe`.
+4. The GUI will auto-detect your `WoW.exe`, show its patch status, and let you apply or adjust the patch with one click.
 
-That's it — no Python, no command line, no installation. Just a single portable `.exe`.
+You can also use the **Browse** button to select a `WoW.exe` from any location.
 
 ## Requirements
 
 - Windows (64-bit or 32-bit)
+
+## Features
+
+- **Auto-detect**: Finds `WoW.exe` in the same folder automatically
+- **Status check**: Shows whether your exe is patched, unpatched, or an unsupported version
+- **Height slider**: Adjust the camera height offset from 0.0 to 3.0 yards
+- **Update height**: Change the offset on an already-patched exe without re-patching
+- **Restore backup**: One-click revert to the original `WoW.exe` from the `.bak` file
 
 ## What it does
 
@@ -20,45 +29,29 @@ It finds the spot in `Camera_Update` right after the camera reads its target pos
 
 | Setting | Value |
 |---|---|
-| Height offset | `+0.5` yards |
+| Default height offset | `+0.50` yards |
 | Patch site | `0x006070cb` |
 | Target client | WoW 3.3.5a |
-
-## Adjusting the height
-
-If you've already patched your `WoW.exe`, you can change the baked-in offset without re-patching from scratch:
-
-```
-CameraReforged.exe WoW.exe --set-height 1.25
-```
-
-This rewrites the float constant inside the existing patch. Close WoW first.
 
 ## Safety
 
 - A backup is saved automatically as `WoW.exe.bak` the first time you patch (it won't overwrite an existing backup).
-- Running the patcher on an already-patched exe is detected and refused, so you can't double-patch.
-- To revert: delete the patched `WoW.exe` and rename `WoW.exe.bak` back to `WoW.exe`.
+- Running the patcher on an already-patched exe is detected — use "Update Height" instead.
+- To revert: click **Restore Backup** in the GUI, or manually delete `WoW.exe` and rename `WoW.exe.bak`.
 
 ## Building from source
 
-If you want to modify the default height offset or tweak the patcher:
-
-1. Edit `HEIGHT_ADD` in `patch_camera.py`.
-2. Install [PyInstaller](https://pyinstaller.org/): `pip install pyinstaller`
-3. Build: `pyinstaller --onefile --console --name CameraReforged patch_camera.py`
-4. The built `.exe` will be in the `dist/` folder.
-
-Alternatively, you can run the Python script directly if you have Python 3 installed:
-
-```
-python patch_camera.py WoW.exe --apply
-```
-
-Or use the included `Patch_WoW_Camera.bat` drag-and-drop launcher (it will auto-detect Python or offer to download a portable copy).
+1. Install [Python 3](https://www.python.org/downloads/) and [PyInstaller](https://pyinstaller.org/):
+   ```
+   pip install pyinstaller
+   ```
+2. Build:
+   ```
+   pyinstaller --onefile --windowed --name CameraReforged camerareforged.py
+   ```
+3. The built `.exe` will be in the `dist/` folder.
 
 ## Files
 
-- `CameraReforged.exe` — standalone portable patcher (no dependencies)
-- `patch_camera.py` — the source patcher script
-- `Patch_WoW_Camera.bat` — fallback drag-and-drop launcher (for users with Python)
+- `camerareforged.py` — GUI application (entry point)
+- `patcher.py` — patching engine (no UI)
