@@ -72,6 +72,26 @@ class CameraReforgedApp:
             font=("Segoe UI", 10), fg=FG_DIM, bg=BG_DARK
         ).pack(side="left", padx=(12, 0), pady=(6, 0))
 
+        # ── Support section ──
+        support_frame = tk.Frame(main, bg=BG_PANEL, highlightbackground=BORDER,
+                                 highlightthickness=1, padx=14, pady=12)
+        support_frame.pack(fill="x", pady=(0, 12))
+
+        support_label = tk.Label(
+            support_frame, text="Crafted for the community. If CameraReforged made Azeroth feel more immersive, support is always appreciated! ☕",
+            font=("Segoe UI", 8, "italic"), fg=FG_DIM, bg=BG_PANEL, justify="left", anchor="w",
+            wraplength=380
+        )
+        support_label.pack(side="left", anchor="w")
+
+        support_btn = tk.Button(
+            support_frame, text="☕ Support", font=("Segoe UI", 9, "bold"),
+            fg="#000000", bg="#FFDD00", activebackground="#ffea5c",
+            activeforeground="#000000", bd=0, padx=12, pady=5,
+            cursor="hand2", command=self._open_donation
+        )
+        support_btn.pack(side="right", anchor="e")
+
         # ── File section ──
         file_frame = tk.Frame(main, bg=BG_PANEL, highlightbackground=BORDER,
                               highlightthickness=1, padx=14, pady=12)
@@ -201,25 +221,6 @@ class CameraReforgedApp:
         self.log_text.tag_configure("success", foreground=GREEN)
         self.log_text.tag_configure("warning", foreground=AMBER)
         self.log_text.tag_configure("error",   foreground=RED)
-
-        # ── Footer / Support ──
-        footer = tk.Frame(main, bg=BG_DARK)
-        footer.pack(fill="x", pady=(12, 0))
-
-        support_label = tk.Label(
-            footer, text="Crafted for the community. If CameraReforged made Azeroth feel more immersive, support is always appreciated! ☕",
-            font=("Segoe UI", 8, "italic"), fg=FG_DIM, bg=BG_DARK, justify="left", anchor="w",
-            wraplength=380
-        )
-        support_label.pack(side="left", anchor="w")
-
-        support_btn = tk.Button(
-            footer, text="☕ Support", font=("Segoe UI", 9, "bold"),
-            fg="#000000", bg="#FFDD00", activebackground="#ffea5c",
-            activeforeground="#000000", bd=0, padx=12, pady=5,
-            cursor="hand2", command=self._open_donation
-        )
-        support_btn.pack(side="right", anchor="e")
 
         self._update_buttons()
 
