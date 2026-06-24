@@ -198,8 +198,16 @@ def get_section_cave(data, sections, image_base, section_name, needed_size):
     Find a cave in a section by looking at the padding between virt_size and raw_size.
     If the padding is not large enough, falls back to scanning the end of the section raw data for runs of 0x00/0xCC/0x90.
     """
+    target = section_name.lower().strip()
     for name, virt_addr, virt_size, raw_offset, raw_size in sections:
-        if section_name.lower() in name.lower():
+        clean_name = name.lower().replace('.', '').strip()
+        is_match = False
+        if target == 'text':
+            is_match = clean_name in ('text', 'code')
+        else:
+            is_match = (clean_name == target)
+
+        if is_match:
             # Method 1: Check if there's enough space in the section alignment padding
             aligned_rva = (virt_addr + virt_size + 15) & ~15
             if aligned_rva + needed_size <= virt_addr + raw_size:
