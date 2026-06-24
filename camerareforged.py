@@ -39,14 +39,17 @@ class CameraReforgedApp:
         self.root.resizable(False, False)
 
         # Centre on screen
-        w, h = 560, 650
+        w, h = 560, 760
         x = (self.root.winfo_screenwidth()  - w) // 2
         y = (self.root.winfo_screenheight() - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
         self.exe_path = None
-        self.status   = None  # "unpatched" | "patched" | "unknown" | None
+        self.status   = None  # "unpatched" | "patched" | "patched_legacy" | "unknown" | None
         self.cur_height = None
+        self.cur_shoulder = None
+        self.cur_max_factor = None
+        self.cur_zoom_speed = None
 
         self._build_ui()
         self._auto_detect()
@@ -137,39 +140,20 @@ class CameraReforgedApp:
         )
         self.status_label.pack(anchor="w", pady=(6, 0))
 
-        # ── Height control ──
-        height_frame = tk.Frame(main, bg=BG_PANEL, highlightbackground=BORDER,
-                                highlightthickness=1, padx=14, pady=12)
-        height_frame.pack(fill="x", pady=(0, 12))
-
-        tk.Label(
-            height_frame, text="HEIGHT OFFSET (YARDS)",
-            font=("Segoe UI", 8, "bold"), fg=FG_DIM, bg=BG_PANEL
-        ).pack(anchor="w")
-
-        slider_row = tk.Frame(height_frame, bg=BG_PANEL)
-        slider_row.pack(fill="x", pady=(8, 0))
+        # ── Camera Settings ──
+        settings_frame = tk.Frame(main, bg=BG_PANEL, highlightbackground=BORDER,
+                                  highlightthickness=1, padx=14, pady=12)
+        settings_frame.pack(fill="x", pady=(0, 12))
 
         self.height_var = tk.DoubleVar(value=patcher.DEFAULT_HEIGHT)
+        self.shoulder_var = tk.DoubleVar(value=patcher.DEFAULT_SHOULDER)
+        self.max_distance_var = tk.DoubleVar(value=patcher.DEFAULT_MAX_FACTOR)
+        self.zoom_speed_var = tk.DoubleVar(value=patcher.DEFAULT_ZOOM_SPEED)
 
-        self.height_scale = tk.Scale(
-            slider_row, from_=0.0, to=3.0, resolution=0.05, orient="horizontal",
-            variable=self.height_var, bg=BG_PANEL, fg=FG_PRIMARY,
-            troughcolor=BG_INPUT, highlightbackground=BG_PANEL,
-            activebackground=ACCENT, sliderrelief="flat",
-            font=("Consolas", 10), bd=0, length=380,
-            command=self._on_slider_change
-        )
-        self.height_scale.pack(side="left", fill="x", expand=True)
-
-        self.height_entry = tk.Entry(
-            slider_row, textvariable=self.height_var, width=6,
-            font=("Consolas", 12, "bold"), fg=ACCENT, bg=BG_INPUT,
-            insertbackground=FG_PRIMARY, bd=0, justify="center"
-        )
-        self.height_entry.pack(side="right", padx=(10, 0), ipady=4)
-        self.height_entry.bind("<Return>", self._on_entry_change)
-        self.height_entry.bind("<FocusOut>", self._on_entry_change)
+        self._create_slider_row(settings_frame, "HEIGHT OFFSET (YARDS)", self.height_var, 0.0, 3.0, 0.05, patcher.DEFAULT_HEIGHT)
+        self._create_slider_row(settings_frame, "SHOULDER OFFSET (YARDS)", self.shoulder_var, -2.0, 2.0, 0.05, patcher.DEFAULT_SHOULDER)
+        self._create_slider_row(settings_frame, "MAX CAMERA DISTANCE (FACTOR)", self.max_distance_var, 1.0, 5.0, 0.05, patcher.DEFAULT_MAX_FACTOR)
+        self._create_slider_row(settings_frame, "ZOOM SPEED", self.zoom_speed_var, 1.0, 100.0, 1.0, patcher.DEFAULT_ZOOM_SPEED)
 
         # ── Action buttons ──
         btn_frame = tk.Frame(main, bg=BG_DARK)
@@ -183,13 +167,13 @@ class CameraReforgedApp:
         )
         self.patch_btn.pack(side="left", fill="x", expand=True)
 
-        self.height_btn = tk.Button(
-            btn_frame, text="📐  Update Height", font=("Segoe UI", 11, "bold"),
+        self.update_btn = tk.Button(
+            btn_frame, text="📐  Update Settings", font=("Segoe UI", 11, "bold"),
             fg=FG_BRIGHT, bg="#2a6041", activebackground=GREEN,
             activeforeground=FG_BRIGHT, bd=0, padx=20, pady=10,
-            cursor="hand2", command=self._update_height
+            cursor="hand2", command=self._update_values
         )
-        self.height_btn.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.update_btn.pack(side="left", fill="x", expand=True, padx=(8, 0))
 
         self.restore_btn = tk.Button(
             btn_frame, text="↩  Restore Backup", font=("Segoe UI", 11, "bold"),
@@ -223,6 +207,55 @@ class CameraReforgedApp:
         self.log_text.tag_configure("error",   foreground=RED)
 
         self._update_buttons()
+
+    def _create_entry_handler(self, var, entry, min_val, max_val, default_val):
+        def handler(event=None):
+            try:
+                v = float(entry.get())
+                v = max(min_val, min(max_val, v))
+                if min_val == 1.0 and max_val == 100.0:
+                    v = int(v)
+                else:
+                    v = round(v, 2)
+                var.set(v)
+            except ValueError:
+                var.set(default_val)
+        return handler
+
+    def _create_slider_row(self, parent, label_text, var, from_, to, res, default_val):
+        row = tk.Frame(parent, bg=BG_PANEL)
+        row.pack(fill="x", pady=(4, 6))
+
+        lbl = tk.Label(
+            row, text=label_text, font=("Segoe UI", 8, "bold"),
+            fg=FG_DIM, bg=BG_PANEL
+        )
+        lbl.pack(anchor="w")
+
+        controls = tk.Frame(row, bg=BG_PANEL)
+        controls.pack(fill="x", pady=(2, 0))
+
+        scale = tk.Scale(
+            controls, from_=from_, to=to, resolution=res, orient="horizontal",
+            variable=var, bg=BG_PANEL, fg=FG_PRIMARY,
+            troughcolor=BG_INPUT, highlightbackground=BG_PANEL,
+            activebackground=ACCENT, sliderrelief="flat",
+            font=("Consolas", 10), bd=0, length=380, showvalue=False
+        )
+        scale.pack(side="left", fill="x", expand=True)
+
+        entry = tk.Entry(
+            controls, textvariable=var, width=6,
+            font=("Consolas", 12, "bold"), fg=ACCENT, bg=BG_INPUT,
+            insertbackground=FG_PRIMARY, bd=0, justify="center"
+        )
+        entry.pack(side="right", padx=(10, 0), ipady=4)
+
+        handler = self._create_entry_handler(var, entry, from_, to, default_val)
+        entry.bind("<Return>", handler)
+        entry.bind("<FocusOut>", handler)
+
+        return scale, entry
 
     # ── Logging ─────────────────────────────────────────────────────────
 
@@ -262,17 +295,34 @@ class CameraReforgedApp:
         self.path_var.set(display)
 
         try:
-            status, height = patcher.check_status(path)
+            status, values = patcher.check_status(path)
             self.status = status
-            self.cur_height = height
+            
+            h, s, m, z = values
+            self.cur_height = h
+            self.cur_shoulder = s
+            self.cur_max_factor = m
+            self.cur_zoom_speed = z
+            
             self._update_status_display()
 
-            if status == "patched" and height is not None:
-                self.height_var.set(round(height, 2))
+            if status == "patched":
+                self.height_var.set(round(h, 2))
+                self.shoulder_var.set(round(s, 2))
+                self.max_distance_var.set(round(m, 2))
+                self.zoom_speed_var.set(round(z, 2))
+            elif status == "patched_legacy":
+                self.height_var.set(round(h, 2))
+                self.shoulder_var.set(0.0)
+                self.max_distance_var.set(1.0)
+                self.zoom_speed_var.set(8.33)
 
         except Exception as e:
             self.status = "error"
             self.cur_height = None
+            self.cur_shoulder = None
+            self.cur_max_factor = None
+            self.cur_zoom_speed = None
             self._set_status(f"✗  Error: {e}", RED)
             self._log(f"Error loading: {e}", "error")
 
@@ -283,9 +333,12 @@ class CameraReforgedApp:
             self._set_status("○  Not Patched — Ready to apply", AMBER)
             self._log("WoW.exe is unpatched and ready.", "info")
         elif self.status == "patched":
-            h = f" ({self.cur_height:+.2f} yards)" if self.cur_height else ""
+            h = f" (H:{self.cur_height:+.2f}, S:{self.cur_shoulder:+.2f}, M:{self.cur_max_factor:.2f}, Z:{self.cur_zoom_speed:.1f})"
             self._set_status(f"●  Patched{h}", GREEN)
             self._log(f"WoW.exe is already patched{h}.", "success")
+        elif self.status == "patched_legacy":
+            self._set_status("●  Patched (Legacy) — Restore required", AMBER)
+            self._log("Legacy patch detected. Please 'Restore Backup' and apply a fresh patch.", "warning")
         elif self.status == "unknown":
             self._set_status("✗  Unknown — Wrong version?", RED)
             self._log("Unexpected bytes at patch site. Needs WoW 3.3.5a.", "error")
@@ -305,11 +358,11 @@ class CameraReforgedApp:
         else:
             self.patch_btn.configure(state="disabled", bg=BG_INPUT)
 
-        # Update Height — only when already patched
+        # Update Settings — only when already patched
         if has_file and self.status == "patched":
-            self.height_btn.configure(state="normal", bg="#2a6041")
+            self.update_btn.configure(state="normal", bg="#2a6041")
         else:
-            self.height_btn.configure(state="disabled", bg=BG_INPUT)
+            self.update_btn.configure(state="disabled", bg=BG_INPUT)
 
         # Restore Backup — only when .bak exists
         if has_file and os.path.exists(self.exe_path + '.bak'):
@@ -317,42 +370,35 @@ class CameraReforgedApp:
         else:
             self.restore_btn.configure(state="disabled", bg=BG_INPUT)
 
-    # ── Slider/Entry sync ───────────────────────────────────────────────
-
-    def _on_slider_change(self, val):
-        pass  # DoubleVar already syncs
-
-    def _on_entry_change(self, event=None):
-        try:
-            v = float(self.height_entry.get())
-            v = max(0.0, min(3.0, v))
-            self.height_var.set(v)
-        except ValueError:
-            self.height_var.set(patcher.DEFAULT_HEIGHT)
-
     # ── Actions ─────────────────────────────────────────────────────────
 
     def _apply_patch(self):
         if not self.exe_path:
             return
         try:
-            height = self.height_var.get()
-            result = patcher.apply_patch(self.exe_path, height)
+            h = self.height_var.get()
+            s = self.shoulder_var.get()
+            m = self.max_distance_var.get()
+            z = self.zoom_speed_var.get()
+            result = patcher.apply_patch(self.exe_path, height=h, shoulder=s, max_distance=m, zoom_speed=z)
             self._log(result, "success")
             self._load_exe(self.exe_path)  # Refresh status
         except Exception as e:
             self._log(f"Patch failed: {e}", "error")
 
-    def _update_height(self):
+    def _update_values(self):
         if not self.exe_path:
             return
         try:
-            new_h = self.height_var.get()
-            result = patcher.set_height(self.exe_path, new_h)
+            h = self.height_var.get()
+            s = self.shoulder_var.get()
+            m = self.max_distance_var.get()
+            z = self.zoom_speed_var.get()
+            result = patcher.update_values(self.exe_path, height=h, shoulder=s, max_distance=m, zoom_speed=z)
             self._log(result, "success")
             self._load_exe(self.exe_path)  # Refresh status
         except Exception as e:
-            self._log(f"Height update failed: {e}", "error")
+            self._log(f"Update failed: {e}", "error")
 
     def _restore_backup(self):
         if not self.exe_path:
