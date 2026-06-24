@@ -1,5 +1,5 @@
 """
-CameraReforged — WoW 3.3.5a Camera Patcher (Definitive Edition Engine)
+CameraReforged — WoW 3.3.5a Camera Patcher (Definitive Edition Engine - Phase 3)
 
 Pure patching logic with no UI, no sys.exit, no print.
 All functions return values or raise exceptions.
@@ -35,18 +35,90 @@ ORIGINAL_SHOULDER_BYTES = {
     0x009739d8: bytes([0xD9, 0x80, 0xE4, 0x02, 0x00, 0x00])
 }
 
-# Code cave offsets
-CAVE_HEIGHT_VAL_OFFSET     = 23
-CAVE_SHOULDER_VAL_OFFSET   = 27
-CAVE_MAX_FACTOR_STR_OFFSET = 31
-CAVE_ZOOM_SPEED_STR_OFFSET = 39
-CAVE_TOTAL_SIZE            = 47
+# Phase 3: CVar registration hook
+CVAR_INIT_VA = 0x0051D9B0
+ORIGINAL_CVAR_INIT_BYTES = bytes([0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00])
+
+# Cave offsets inside .rdata
+CAVE_HEIGHT_VAL_OFFSET     = 0
+CAVE_SHOULDER_VAL_OFFSET   = 4
+CAVE_MAX_FACTOR_STR_OFFSET = 8
+CAVE_ZOOM_SPEED_STR_OFFSET = 16
+CAVE_HEIGHT_NAME_OFFSET    = 24
+CAVE_HEIGHT_DEF_OFFSET     = 42
+CAVE_SHOULDER_NAME_OFFSET  = 47
+CAVE_SHOULDER_DEF_OFFSET   = 71
+CAVE_FUNCTIONS_OFFSET      = 76
 
 # Defaults
 DEFAULT_HEIGHT = 0.5
 DEFAULT_SHOULDER = 0.0
 DEFAULT_MAX_FACTOR = 2.6
 DEFAULT_ZOOM_SPEED = 20.0
+
+
+class Assembler:
+    """A lightweight absolute/relative x86 assembler helper for generating machine code."""
+    def __init__(self, start_va):
+        self.va = start_va
+        self.buf = bytearray()
+        self.labels = {}
+        self.jumps = [] # list of (offset, label_name/absolute_target, jump_type)
+
+    def label(self, name):
+        self.labels[name] = self.va + len(self.buf)
+
+    def write(self, data):
+        self.buf.extend(data)
+
+    def jmp_rel8(self, name, cond_op=None):
+        pos = len(self.buf)
+        if cond_op is None:
+            cond_op = b'\xEB'
+        self.buf.extend(cond_op)
+        self.buf.append(0)
+        self.jumps.append((pos + len(cond_op), name, 'rel8'))
+
+    def jmp_rel32(self, target, cond_op=None):
+        pos = len(self.buf)
+        if cond_op is None:
+            cond_op = b'\xE9'
+        self.buf.extend(cond_op)
+        self.buf.extend(b'\x00\x00\x00\x00')
+        self.jumps.append((pos + len(cond_op), target, 'rel32'))
+
+    def call_abs(self, target):
+        pos = len(self.buf)
+        self.buf.append(0xE8)
+        self.buf.extend(b'\x00\x00\x00\x00')
+        self.jumps.append((pos + 1, target, 'call32'))
+
+    def push_abs(self, target):
+        pos = len(self.buf)
+        self.buf.append(0x68)
+        self.buf.extend(b'\x00\x00\x00\x00')
+        self.jumps.append((pos + 1, target, 'abs32'))
+
+    def resolve(self):
+        for pos, target, jtype in self.jumps:
+            if isinstance(target, str):
+                target_va = self.labels[target]
+            else:
+                target_va = target
+            curr_va = self.va + pos
+            if jtype == 'rel8':
+                rel = target_va - (curr_va + 1)
+                assert -128 <= rel <= 127, f"Rel8 jump to {target} out of range ({rel})"
+                self.buf[pos] = rel & 0xFF
+            elif jtype == 'rel32':
+                rel = target_va - (curr_va + 4)
+                struct.pack_into('<i', self.buf, pos, rel)
+            elif jtype == 'call32':
+                rel = target_va - (curr_va + 4)
+                struct.pack_into('<i', self.buf, pos, rel)
+            elif jtype == 'abs32':
+                struct.pack_into('<I', self.buf, pos, target_va)
+        return bytes(self.buf)
 
 
 def parse_pe(data):
@@ -91,7 +163,7 @@ def offset_to_va(off, sections, image_base):
 
 
 def find_code_cave(data, sections, image_base, needed=64):
-    """Find a run of 0x00/0xCC/0x90 in the .text section."""
+    """Find a run of 0x00/0xCC/0x90 in the .text section (used to detect legacy locations)."""
     for name, virt_addr, virt_size, raw_offset, raw_size in sections:
         if 'text' not in name.lower() and 'code' not in name.lower():
             continue
@@ -113,7 +185,7 @@ def find_code_cave(data, sections, image_base, needed=64):
 
 
 def find_existing_cave_va(data, sections, image_base):
-    """If already patched, recover the code cave VA from the JMP."""
+    """If legacy patched, recover the legacy code cave VA from the JMP."""
     patch_off = va_to_offset(PATCH_VA, sections, image_base)
     if data[patch_off] != 0xE9:
         return None
@@ -121,31 +193,15 @@ def find_existing_cave_va(data, sections, image_base):
     return PATCH_VA + 5 + rel
 
 
-def build_cave(cave_va, height_add, shoulder_val, max_factor_str, zoom_speed_str):
-    """Build the code cave payload (47 bytes)."""
-    height_va = cave_va + CAVE_HEIGHT_VAL_OFFSET
-
-    buf = bytearray()
-    buf += b'\xD9\x05'
-    buf += struct.pack('<I', height_va)
-    buf += b'\xD8\x45\xD4'
-    buf += b'\xD9\x5D\xD4'
-    buf += b'\xD9\x05\x70\x16\x9F\x00'
-    jmp_target = RETURN_VA - (cave_va + CAVE_HEIGHT_VAL_OFFSET)
-    buf += b'\xE9' + struct.pack('<i', jmp_target)
-
-    # Values at offsets:
-    # 23: Height (float, 4 bytes)
-    buf += struct.pack('<f', height_add)
-    # 27: Shoulder (float, 4 bytes)
-    buf += struct.pack('<f', shoulder_val)
-    # 31: Max distance factor (string, 8 bytes)
-    buf += max_factor_str.encode('ascii').ljust(8, b'\x00')
-    # 39: Zoom speed (string, 8 bytes)
-    buf += zoom_speed_str.encode('ascii').ljust(8, b'\x00')
-
-    assert len(buf) == CAVE_TOTAL_SIZE
-    return buf
+def get_cave_addresses(data, sections, image_base):
+    """Deterministic recovery of the .rdata cave addresses."""
+    for name, virt_addr, virt_size, raw_offset, raw_size in sections:
+        if 'rdata' in name.lower():
+            aligned_rva = (virt_addr + virt_size + 15) & ~15
+            cave_va = image_base + aligned_rva
+            cave_off = raw_offset + (aligned_rva - virt_addr)
+            return cave_va, cave_off
+    raise ValueError("Could not find .rdata section")
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +215,8 @@ def check_status(exe_path):
     Returns:
         (status, values) where status is one of:
         - "unpatched"      — original bytes intact, values are stock defaults
-        - "patched"        — JMP found, values are the current float/string settings
-        - "patched_legacy" — JMP found but legacy cave format, values has legacy height and defaults for others
+        - "patched"        — both detours present, values are the current float/string settings
+        - "patched_legacy" — legacy height-only patch, must restore first
         - "unknown"        — unexpected bytes at patch site, values are defaults
     """
     with open(exe_path, 'rb') as f:
@@ -168,47 +224,46 @@ def check_status(exe_path):
 
     try:
         image_base, sections = parse_pe(data)
+        
+        # Check height patch site
         patch_off = va_to_offset(PATCH_VA, sections, image_base)
-        actual = bytes(data[patch_off:patch_off + len(ORIGINAL_BYTES)])
+        actual_height_bytes = bytes(data[patch_off:patch_off + len(ORIGINAL_BYTES)])
 
-        if actual == ORIGINAL_BYTES:
-            return ("unpatched", (0.0, 0.0, 1.0, 8.33))
+        # Check cvar init patch site
+        cvar_init_off = va_to_offset(CVAR_INIT_VA, sections, image_base)
+        actual_cvar_bytes = bytes(data[cvar_init_off:cvar_init_off + len(ORIGINAL_CVAR_INIT_BYTES)])
 
-        if actual[:1] == b'\xE9':
+        is_patched_height = (actual_height_bytes[0] == 0xE9)
+        is_patched_cvar   = (actual_cvar_bytes[0] == 0xE9)
+
+        if not is_patched_height and not is_patched_cvar:
+            if actual_height_bytes == ORIGINAL_BYTES and actual_cvar_bytes == ORIGINAL_CVAR_INIT_BYTES:
+                return ("unpatched", (0.0, 0.0, 1.0, 8.33))
+            return ("unknown", (0.0, 0.0, 1.0, 8.33))
+
+        if is_patched_height and not is_patched_cvar:
+            # Legacy height-only patch
             cave_va = find_existing_cave_va(data, sections, image_base)
             if cave_va:
-                # Read height
-                height_off = va_to_offset(cave_va + CAVE_HEIGHT_VAL_OFFSET, sections, image_base)
+                height_off = va_to_offset(cave_va + 23, sections, image_base)
                 cur_height = struct.unpack_from('<f', data, height_off)[0]
+                return ("patched_legacy", (cur_height, 0.0, 1.0, 8.33))
+            return ("patched_legacy", (0.5, 0.0, 1.0, 8.33))
 
-                # Check if it's the new Definitive Edition layout by verifying the max factor CVar push redirect
-                max_factor_push_off = va_to_offset(PUSH_MAX_FACTOR_VA, sections, image_base)
-                is_definitive = False
-                if data[max_factor_push_off] == 0x68:
-                    target_va = struct.unpack_from('<I', data, max_factor_push_off + 1)[0]
-                    if cave_va <= target_va < cave_va + CAVE_TOTAL_SIZE:
-                        is_definitive = True
-
-                if is_definitive:
-                    # Read shoulder offset
-                    shoulder_off = va_to_offset(cave_va + CAVE_SHOULDER_VAL_OFFSET, sections, image_base)
-                    cur_shoulder = struct.unpack_from('<f', data, shoulder_off)[0]
-
-                    # Read max factor
-                    max_factor_off = va_to_offset(cave_va + CAVE_MAX_FACTOR_STR_OFFSET, sections, image_base)
-                    max_factor_bytes = data[max_factor_off:max_factor_off + 8]
-                    cur_max_factor = float(max_factor_bytes.split(b'\x00')[0].decode('ascii'))
-
-                    # Read zoom speed
-                    zoom_speed_off = va_to_offset(cave_va + CAVE_ZOOM_SPEED_STR_OFFSET, sections, image_base)
-                    zoom_speed_bytes = data[zoom_speed_off:zoom_speed_off + 8]
-                    cur_zoom_speed = float(zoom_speed_bytes.split(b'\x00')[0].decode('ascii'))
-
-                    return ("patched", (cur_height, cur_shoulder, cur_max_factor, cur_zoom_speed))
-                else:
-                    return ("patched_legacy", (cur_height, 0.0, 1.0, 8.33))
-
-            return ("patched", (0.0, 0.0, 1.0, 8.33))
+        if is_patched_height and is_patched_cvar:
+            # Definitive Edition patch
+            cave_va, cave_off = get_cave_addresses(data, sections, image_base)
+            
+            cur_height = struct.unpack_from('<f', data, cave_off + CAVE_HEIGHT_VAL_OFFSET)[0]
+            cur_shoulder = struct.unpack_from('<f', data, cave_off + CAVE_SHOULDER_VAL_OFFSET)[0]
+            
+            max_factor_bytes = data[cave_off + CAVE_MAX_FACTOR_STR_OFFSET : cave_off + CAVE_MAX_FACTOR_STR_OFFSET + 8]
+            cur_max_factor = float(max_factor_bytes.split(b'\x00')[0].decode('ascii'))
+            
+            zoom_speed_bytes = data[cave_off + CAVE_ZOOM_SPEED_STR_OFFSET : cave_off + CAVE_ZOOM_SPEED_STR_OFFSET + 8]
+            cur_zoom_speed = float(zoom_speed_bytes.split(b'\x00')[0].decode('ascii'))
+            
+            return ("patched", (cur_height, cur_shoulder, cur_max_factor, cur_zoom_speed))
 
     except Exception:
         pass
@@ -230,13 +285,19 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
 
     # 1. Verify height patch site
     patch_off = va_to_offset(PATCH_VA, sections, image_base)
-    actual = bytes(data[patch_off:patch_off + len(ORIGINAL_BYTES)])
-    if actual != ORIGINAL_BYTES:
-        if actual[:1] == b'\xE9':
-            raise ValueError("Already patched. Use 'Update' to change the parameters.")
-        raise ValueError("Unexpected bytes at height patch site. Wrong WoW version (need 3.3.5a)?")
+    actual_height_bytes = bytes(data[patch_off:patch_off + len(ORIGINAL_BYTES)])
+    if actual_height_bytes != ORIGINAL_BYTES:
+        if actual_height_bytes[0] == 0xE9:
+            raise ValueError("Already patched. Use 'Update Settings' to change parameters.")
+        raise ValueError("Unexpected bytes at height patch site. Wrong WoW version?")
 
-    # 2. Verify registration and shoulder offset patch sites
+    # 2. Verify CVar init patch site
+    cvar_init_off = va_to_offset(CVAR_INIT_VA, sections, image_base)
+    actual_cvar_bytes = bytes(data[cvar_init_off:cvar_init_off + len(ORIGINAL_CVAR_INIT_BYTES)])
+    if actual_cvar_bytes != ORIGINAL_CVAR_INIT_BYTES:
+        raise ValueError("Unexpected bytes at CVar initialization function entry.")
+
+    # 3. Verify registration and shoulder offset patch sites
     max_factor_push_off = va_to_offset(PUSH_MAX_FACTOR_VA, sections, image_base)
     if bytes(data[max_factor_push_off : max_factor_push_off + len(ORIGINAL_MAX_FACTOR_BYTES)]) != ORIGINAL_MAX_FACTOR_BYTES:
         raise ValueError("Unexpected bytes at max factor CVar patch site.")
@@ -251,33 +312,149 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
         if bytes(data[off : off + len(expected)]) != expected:
             raise ValueError(f"Unexpected bytes at shoulder read site {va:#010x}.")
 
-    # Find code cave
-    cave_off = find_code_cave(data, sections, image_base, needed=CAVE_TOTAL_SIZE)
-    if cave_off is None:
-        raise ValueError("No code cave found in .text section")
-
-    cave_va = offset_to_va(cave_off, sections, image_base)
+    # Get .rdata cave addresses
+    cave_va, cave_off = get_cave_addresses(data, sections, image_base)
 
     # Format strings
-    max_factor_str = f"{max_distance:.2f}"
-    zoom_speed_str = f"{zoom_speed:.2f}"
+    max_factor_str = f"{max_distance:.2f}".encode('ascii').ljust(8, b'\x00')
+    zoom_speed_str = f"{zoom_speed:.2f}".encode('ascii').ljust(8, b'\x00')
 
-    # Build payloads
-    cave_code = build_cave(cave_va, height, shoulder, max_factor_str, zoom_speed_str)
+    # Build cave payload buffer (384 bytes)
+    cave_buf = bytearray(384)
 
-    # JMP patch at height patch site (6 bytes: JMP rel + NOP)
-    jmp_patch = bytearray(b'\xE9')
-    jmp_patch += struct.pack('<i', cave_va - (PATCH_VA + 5))
-    jmp_patch += b'\x90'
+    # Write static variables & strings
+    struct.pack_into('<f', cave_buf, CAVE_HEIGHT_VAL_OFFSET, height)
+    struct.pack_into('<f', cave_buf, CAVE_SHOULDER_VAL_OFFSET, shoulder)
+    cave_buf[CAVE_MAX_FACTOR_STR_OFFSET : CAVE_MAX_FACTOR_STR_OFFSET + 8] = max_factor_str
+    cave_buf[CAVE_ZOOM_SPEED_STR_OFFSET : CAVE_ZOOM_SPEED_STR_OFFSET + 8] = zoom_speed_str
+    
+    # Write CVar strings
+    cvar_height_name_bytes = b"test_cameraHeight\x00"
+    cvar_height_def_bytes = f"{height:.2f}\x00".encode('ascii')
+    cvar_shoulder_name_bytes = b"test_cameraOverShoulder\x00"
+    cvar_shoulder_def_bytes = f"{shoulder:.2f}\x00".encode('ascii')
 
-    # CVar registration pushes (5 bytes: PUSH address)
-    max_factor_push_patch = b'\x68' + struct.pack('<I', cave_va + CAVE_MAX_FACTOR_STR_OFFSET)
-    zoom_speed_push_patch = b'\x68' + struct.pack('<I', cave_va + CAVE_ZOOM_SPEED_STR_OFFSET)
+    cave_buf[CAVE_HEIGHT_NAME_OFFSET : CAVE_HEIGHT_NAME_OFFSET + len(cvar_height_name_bytes)] = cvar_height_name_bytes
+    cave_buf[CAVE_HEIGHT_DEF_OFFSET : CAVE_HEIGHT_DEF_OFFSET + len(cvar_height_def_bytes)] = cvar_height_def_bytes
+    cave_buf[CAVE_SHOULDER_NAME_OFFSET : CAVE_SHOULDER_NAME_OFFSET + len(cvar_shoulder_name_bytes)] = cvar_shoulder_name_bytes
+    cave_buf[CAVE_SHOULDER_DEF_OFFSET : CAVE_SHOULDER_DEF_OFFSET + len(cvar_shoulder_def_bytes)] = cvar_shoulder_def_bytes
 
-    # Shoulder offset reads (6 bytes: fld dword ptr [shoulder_val_va])
+    # Assemble code
+    asm = Assembler(cave_va + CAVE_FUNCTIONS_OFFSET)
+
+    # ── height_callback ──
+    asm.label("height_callback")
+    asm.write(b'\x8B\x44\x24\x04')           # mov eax, [esp + 4] (CVar*)
+    asm.write(b'\xD9\x40\x2C')               # fld dword ptr [eax + 2Ch] (valueFloat)
+    asm.write(b'\xD9\x1D' + struct.pack('<I', cave_va + CAVE_HEIGHT_VAL_OFFSET))
+    asm.write(b'\xB8\x01\x00\x00\x00')       # mov eax, 1
+    asm.write(b'\xC3')                       # ret
+
+    # ── shoulder_callback ──
+    asm.label("shoulder_callback")
+    asm.write(b'\x8B\x44\x24\x04')           # mov eax, [esp + 4] (CVar*)
+    asm.write(b'\xD9\x40\x2C')               # fld dword ptr [eax + 2Ch] (valueFloat)
+    asm.write(b'\xD9\x1D' + struct.pack('<I', cave_va + CAVE_SHOULDER_VAL_OFFSET))
+    asm.write(b'\xB8\x01\x00\x00\x00')       # mov eax, 1
+    asm.write(b'\xC3')                       # ret
+
+    # ── cvar_init_hook ──
+    asm.label("cvar_init_hook")
+    asm.write(b'\x60')                       # pushad
+    
+    # Register test_cameraHeight
+    asm.write(b'\x6A\x00')                   # push 0 (a9)
+    asm.write(b'\x6A\x00')                   # push 0 (a8)
+    asm.write(b'\x6A\x00')                   # push 0 (a7)
+    asm.write(b'\x6A\x00')                   # push 0 (a6)
+    asm.push_abs("height_callback")
+    asm.push_abs(cave_va + CAVE_HEIGHT_DEF_OFFSET)
+    asm.write(b'\x6A\x01')                   # push 1 (flags)
+    asm.write(b'\x6A\x00')                   # push 0 (desc)
+    asm.push_abs(cave_va + CAVE_HEIGHT_NAME_OFFSET)
+    asm.write(b'\xB8\xC0\x7F\x76\x00')       # mov eax, 0x00767FC0
+    asm.write(b'\xFF\xD0')                   # call eax
+    asm.write(b'\x83\xC4\x24')               # add esp, 24h
+    
+    # Register test_cameraOverShoulder
+    asm.write(b'\x6A\x00')                   # push 0 (a9)
+    asm.write(b'\x6A\x00')                   # push 0 (a8)
+    asm.write(b'\x6A\x00')                   # push 0 (a7)
+    asm.write(b'\x6A\x00')                   # push 0 (a6)
+    asm.push_abs("shoulder_callback")
+    asm.push_abs(cave_va + CAVE_SHOULDER_DEF_OFFSET)
+    asm.write(b'\x6A\x01')                   # push 1 (flags)
+    asm.write(b'\x6A\x00')                   # push 0 (desc)
+    asm.push_abs(cave_va + CAVE_SHOULDER_NAME_OFFSET)
+    asm.write(b'\xB8\xC0\x7F\x76\x00')       # mov eax, 0x00767FC0
+    asm.write(b'\xFF\xD0')                   # call eax
+    asm.write(b'\x83\xC4\x24')               # add esp, 24h
+    
+    asm.write(b'\x61')                       # popad
+    asm.write(b'\x55')                       # push ebp
+    asm.write(b'\x8B\xEC')                   # mov ebp, esp
+    asm.write(b'\x81\xEC\x80\x00\x00\x00')   # sub esp, 80h
+    asm.write(b'\xB8\xB9\xD9\x51\x00')       # mov eax, 0x0051D9B9
+    asm.write(b'\xFF\xE0')                   # jmp eax
+
+    # ── camera_height_hook ──
+    asm.label("camera_height_hook")
+    asm.write(b'\xD9\x05' + struct.pack('<I', cave_va + CAVE_HEIGHT_VAL_OFFSET))
+    asm.write(b'\xD8\x45\xD4')               # fadd dword ptr [ebp-2Ch]
+    asm.write(b'\xD9\x5D\xD4')               # fstp dword ptr [ebp-2Ch]
+    asm.write(b'\xD9\x05\x70\x16\x9F\x00')   # fld dword ptr [0x009F1670]
+    asm.jmp_rel32(0x006070d1)
+
+    code_bytes = asm.resolve()
+    assert len(code_bytes) <= 300, f"Code size {len(code_bytes)} exceeds functions allocation space!"
+    
+    # Write code bytes into cave buffer
+    cave_buf[CAVE_FUNCTIONS_OFFSET : CAVE_FUNCTIONS_OFFSET + len(code_bytes)] = code_bytes
+
+    # Find optional header directory to parse section start for PE modifier
+    e_lfanew = struct.unpack_from('<I', data, 0x3C)[0]
+    coff = e_lfanew + 4
+    optional_size = struct.unpack_from('<H', data, coff + 16)[0]
+    opt = coff + 20
+    sec_start = opt + optional_size
+
+    # Modify .rdata PE characteristics to EXECUTE | WRITE | READ | INITIALIZED_DATA
+    rdata_hdr_off = None
+    for i in range(len(sections)):
+        off = sec_start + i * 40
+        name = data[off:off+8].rstrip(b'\x00').decode('ascii', errors='replace')
+        if 'rdata' in name.lower():
+            rdata_hdr_off = off
+            break
+    if rdata_hdr_off is None:
+        raise ValueError("Could not find .rdata section header")
+        
+    charac = struct.unpack_from('<I', data, rdata_hdr_off + 36)[0]
+    charac |= 0xE0000000
+    struct.pack_into('<I', data, rdata_hdr_off + 36, charac)
+
+    # Patch instructions:
+    # 1. Detour CVars_Initialize (9 bytes)
+    cvar_init_hook_va = cave_va + CAVE_FUNCTIONS_OFFSET + asm.labels["cvar_init_hook"]
+    cvar_jmp_patch = b'\xE9' + struct.pack('<i', cvar_init_hook_va - (CVAR_INIT_VA + 5)) + b'\x90\x90\x90\x90'
+    data[cvar_init_off : cvar_init_off + 9] = cvar_jmp_patch
+
+    # 2. Detour Camera Height (6 bytes)
+    camera_height_hook_va = cave_va + CAVE_FUNCTIONS_OFFSET + asm.labels["camera_height_hook"]
+    height_jmp_patch = b'\xE9' + struct.pack('<i', camera_height_hook_va - (PATCH_VA + 5)) + b'\x90'
+    data[patch_off : patch_off + 6] = height_jmp_patch
+
+    # 3. Patch max factor and zoom speed pushes (5 bytes each)
+    data[max_factor_push_off : max_factor_push_off + 5] = b'\x68' + struct.pack('<I', cave_va + CAVE_MAX_FACTOR_STR_OFFSET)
+    data[zoom_speed_push_off : zoom_speed_push_off + 5] = b'\x68' + struct.pack('<I', cave_va + CAVE_ZOOM_SPEED_STR_OFFSET)
+
+    # 4. Patch shoulder reads (6 bytes each)
     shoulder_read_patch = b'\xD9\x05' + struct.pack('<I', cave_va + CAVE_SHOULDER_VAL_OFFSET)
+    for va in READ_SHOULDER_VAS:
+        off = va_to_offset(va, sections, image_base)
+        data[off : off + 6] = shoulder_read_patch
 
-    # Backup
+    # Backup management
     backup = exe_path + '.bak'
     msgs = []
     if not os.path.exists(backup):
@@ -286,25 +463,13 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
     else:
         msgs.append(f"Backup already exists (not overwriting)")
 
-    # Write code cave
-    data[cave_off : cave_off + len(cave_code)] = cave_code
-
-    # Write height JMP
-    data[patch_off : patch_off + len(jmp_patch)] = jmp_patch
-
-    # Write CVar pushes
-    data[max_factor_push_off : max_factor_push_off + len(max_factor_push_patch)] = max_factor_push_patch
-    data[zoom_speed_push_off : zoom_speed_push_off + len(zoom_speed_push_patch)] = zoom_speed_push_patch
-
-    # Write shoulder reads
-    for va in READ_SHOULDER_VAS:
-        off = va_to_offset(va, sections, image_base)
-        data[off : off + len(shoulder_read_patch)] = shoulder_read_patch
+    # Write the entire cave_buf into .rdata padding
+    data[cave_off : cave_off + 384] = cave_buf
 
     with open(exe_path, 'wb') as f:
         f.write(data)
 
-    msgs.append("Patched! Camera height, shoulder offset, max distance, and zoom speed successfully customized.")
+    msgs.append("Patched! Native CVar registration and camera parameters successfully configured.")
     return "\n".join(msgs)
 
 
@@ -318,37 +483,35 @@ def update_values(exe_path, height, shoulder, max_distance, zoom_speed):
         data = bytearray(f.read())
 
     image_base, sections = parse_pe(data)
-    cave_va = find_existing_cave_va(data, sections, image_base)
-    if cave_va is None:
+    
+    # Check if patched
+    patch_off = va_to_offset(PATCH_VA, sections, image_base)
+    cvar_init_off = va_to_offset(CVAR_INIT_VA, sections, image_base)
+    if data[patch_off] != 0xE9 or data[cvar_init_off] != 0xE9:
         raise ValueError("Not patched yet. Apply the patch first.")
 
-    height_off = va_to_offset(cave_va + CAVE_HEIGHT_VAL_OFFSET, sections, image_base)
-    shoulder_off = va_to_offset(cave_va + CAVE_SHOULDER_VAL_OFFSET, sections, image_base)
-    max_factor_off = va_to_offset(cave_va + CAVE_MAX_FACTOR_STR_OFFSET, sections, image_base)
-    zoom_speed_off = va_to_offset(cave_va + CAVE_ZOOM_SPEED_STR_OFFSET, sections, image_base)
+    cave_va, cave_off = get_cave_addresses(data, sections, image_base)
 
-    # Check if max factor CVar push is redirected to see if this is definitive or legacy
-    max_factor_push_off = va_to_offset(PUSH_MAX_FACTOR_VA, sections, image_base)
-    is_definitive = False
-    if data[max_factor_push_off] == 0x68:
-        target_va = struct.unpack_from('<I', data, max_factor_push_off + 1)[0]
-        if cave_va <= target_va < cave_va + CAVE_TOTAL_SIZE:
-            is_definitive = True
-
-    if not is_definitive:
-        raise ValueError("Legacy patch detected. Please click 'Restore Backup' and apply a fresh patch.")
-
+    # Backup
     backup = exe_path + '.bak'
     if not os.path.exists(backup):
         shutil.copy2(exe_path, backup)
 
-    data[height_off:height_off + 4] = struct.pack('<f', height)
-    data[shoulder_off:shoulder_off + 4] = struct.pack('<f', shoulder)
+    # Write floats
+    struct.pack_into('<f', data, cave_off + CAVE_HEIGHT_VAL_OFFSET, height)
+    struct.pack_into('<f', data, cave_off + CAVE_SHOULDER_VAL_OFFSET, shoulder)
 
+    # Write strings
     max_factor_str = f"{max_distance:.2f}".encode('ascii').ljust(8, b'\x00')
     zoom_speed_str = f"{zoom_speed:.2f}".encode('ascii').ljust(8, b'\x00')
-    data[max_factor_off : max_factor_off + 8] = max_factor_str
-    data[zoom_speed_off : zoom_speed_off + 8] = zoom_speed_str
+    data[cave_off + CAVE_MAX_FACTOR_STR_OFFSET : cave_off + CAVE_MAX_FACTOR_STR_OFFSET + 8] = max_factor_str
+    data[cave_off + CAVE_ZOOM_SPEED_STR_OFFSET : cave_off + CAVE_ZOOM_SPEED_STR_OFFSET + 8] = zoom_speed_str
+
+    # Update CVar default strings too
+    cvar_height_def_bytes = f"{height:.2f}\x00".encode('ascii')
+    cvar_shoulder_def_bytes = f"{shoulder:.2f}\x00".encode('ascii')
+    data[cave_off + CAVE_HEIGHT_DEF_OFFSET : cave_off + CAVE_HEIGHT_DEF_OFFSET + len(cvar_height_def_bytes)] = cvar_height_def_bytes
+    data[cave_off + CAVE_SHOULDER_DEF_OFFSET : cave_off + CAVE_SHOULDER_DEF_OFFSET + len(cvar_shoulder_def_bytes)] = cvar_shoulder_def_bytes
 
     with open(exe_path, 'wb') as f:
         f.write(data)
