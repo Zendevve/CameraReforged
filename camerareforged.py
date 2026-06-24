@@ -206,6 +206,22 @@ class CameraReforgedApp:
         self.log_text.tag_configure("warning", foreground=AMBER)
         self.log_text.tag_configure("error",   foreground=RED)
 
+        # ── Footer / License ──
+        footer = tk.Frame(main, bg=BG_DARK)
+        footer.pack(fill="x", pady=(10, 0))
+
+        tk.Label(
+            footer, text="Released under the GNU GPL v3 License",
+            font=("Segoe UI", 8), fg=FG_DIM, bg=BG_DARK
+        ).pack(side="left")
+
+        github_link = tk.Label(
+            footer, text="GitHub Repository",
+            font=("Segoe UI", 8, "underline"), fg=ACCENT, bg=BG_DARK, cursor="hand2"
+        )
+        github_link.pack(side="right")
+        github_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Zendevve/CameraReforged"))
+
         self._update_buttons()
 
     def _create_entry_handler(self, var, entry, min_val, max_val, default_val):

@@ -86,3 +86,10 @@ CameraReforged modifies the PE header to mark the `.rdata` section as executable
    pyinstaller --onefile --windowed --name CameraReforged camerareforged.py
    ```
 3. The packaged `.exe` will be generated in the `dist/` folder.
+
+---
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](file:///d:/COMPROG/camerawow/LICENSE) file for details.
+
