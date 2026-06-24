@@ -1,86 +1,88 @@
-# CameraReforged
+# CameraReforged — Definitive Edition
 
-A portable binary patcher for **WoW 3.3.5a** that raises the camera's target height, so the camera looks at a point closer to head height instead of the chest. No installation required — just a single `.exe`.
+A portable, standalone binary patcher for **WoW 3.3.5a** that extends the game client's camera system natively. It offers over-the-shoulder views, custom defaults, and registers new console variables (CVars) directly in the executable on disk—with **no DLL injection, no background processes, and zero Warden detection risk**.
+
+---
 
 ## Support the Project ☕
 
-CameraReforged was built to solve a simple but frustrating problem: WoW's default camera focusing on your character's chest instead of their head, ruining the sense of immersion in Azeroth. I spent hours reverse-engineering assembly offsets, designing a safe byte-patching engine, and building this dark-themed GUI so you can fix it with a single click.
+CameraReforged was built to solve the immersion-breaking default WoW camera (focusing on the character's chest instead of their head) and replace risky DLL injection engines. I spent hours reverse-engineering binary offsets, designing an x86 assembly code cave compiler, and building this GUI.
 
-This tool is entirely free, open-source, and free of any ads or tracking. 
-
-If this patcher has made your daily raids, dungeon runs, or leveling adventures more enjoyable, **consider buying me a coffee**. A small token of appreciation goes a long way in supporting the time spent maintaining and updating this project!
+If this patcher has made your leveling or raiding adventures more immersive, **consider buying me a coffee**. A small token of appreciation goes a long way!
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/zendevve)
 
-## Usage
-
-1. Download `CameraReforged.exe` from the [Releases](https://github.com/Zendevve/CameraReforged/releases) page.
-2. Place it in the same folder as your `WoW.exe`.
-3. Double-click `CameraReforged.exe`.
-4. The GUI will auto-detect your `WoW.exe`, show its patch status, and let you apply or adjust the patch with one click.
-
-You can also use the **Browse** button to select a `WoW.exe` from any location.
-
-## Requirements
-
-- Windows (64-bit or 32-bit)
+---
 
 ## Features
 
-- **Auto-detect**: Finds `WoW.exe` in the same folder automatically
-- **Status check**: Shows whether your exe is patched, unpatched, or an unsupported version
-- **Height slider**: Adjust the camera height offset from 0.0 to 3.0 yards
-- **Update height**: Change the offset on an already-patched exe without re-patching
-- **Restore backup**: One-click revert to the original `WoW.exe` from the `.bak` file
+- **Vertical Height Offset**: Raise the camera focus point (0.0 to 3.0 yards) so it centers at head height instead of the chest.
+- **Horizontal Shoulder Offset**: Shift the camera horizontally (-2.0 to 2.0 yards) for a modern, over-the-shoulder action perspective.
+- **Max Camera Distance**: Override the client's stock maximum zoom factor limit (1.0 to 5.0 factor, default `2.60`).
+- **Camera Zoom Speed**: Customize how quickly the camera zooms in/out (1.0 to 100.0, default `20.00`).
+- **Native CVar Registration**: Registers `test_cameraHeight` and `test_cameraOverShoulder` console variables directly inside `WoW.exe` upon startup.
+- **Dynamic In-Game Tweaks**: Once patched, variables can be updated in-game instantly via `/console` commands, custom macros, or addons (like DynamicCam)—no need to re-run the patcher.
+- **Addon Compatibility**: Fully compatible with WotLK backports of camera addons.
+- **Warden Safe**: Zero runtime injection or DLL loading. All modifications are on-disk, localized entirely within safe padding bytes in the `.rdata` section.
+- **Automatic Backup**: Saves a `WoW.exe.bak` backup automatically before patching.
 
-## What it does
+---
 
-It finds the spot in `Camera_Update` right after the camera reads its target position, and inserts a small code cave that adds a constant offset to the target's Z (height) value before the original code continues. Nothing else about the camera logic changes — distance, angle, and movement all behave the same, just looking at a higher point.
+## CVar Reference
 
-| Setting | Value |
-|---|---|
-| Default height offset | `+0.50` yards |
-| Patch site | `0x006070cb` |
-| Target client | WoW 3.3.5a |
+Once patched, the client registers and responds to these console variables natively:
 
-## Safety
+| CVar | Default | Range | What It Does |
+|---|---|---|---|
+| `/console test_cameraHeight <val>` | `0.50` | `0.00` to `3.00` | Vertical camera focus offset (yards) |
+| `/console test_cameraOverShoulder <val>` | `0.00` | `-2.00` to `2.00` | Horizontal camera shoulder offset (yards) |
+| `/console cameraDistanceMaxFactor <val>` | `2.60` | `1.00` to `5.00` | Native max camera zoom distance multiplier |
+| `/console cameraDistanceMoveSpeed <val>` | `20.00` | `1.00` to `100.00` | Native camera zoom speed |
 
-- A backup is saved automatically as `WoW.exe.bak` the first time you patch (it won't overwrite an existing backup).
-- Running the patcher on an already-patched exe is detected — use "Update Height" instead.
-- To revert: click **Restore Backup** in the GUI, or manually delete `WoW.exe` and rename `WoW.exe.bak`.
+---
 
-## Building from source
+## ConsoleXP Migration Guide
+
+DynamicCam and similar layouts previously required running `ConsoleXP.dll` via hook injectors (e.g. `ConsoleXPPatcher.exe`) to register camera variables. Since CameraReforged now registers these exact same CVars natively, you can completely uninstall ConsoleXP:
+
+1. Restore your original, unpatched `WoW.exe` (or rename your backup).
+2. Delete `ConsoleXP.dll`, `ConsoleXPPatcher.exe`, and any related DLL injection launchers.
+3. Open `CameraReforged.exe` and click **Browse** to select your `WoW.exe`.
+4. Configure your desired defaults and click **Apply Patch**.
+5. Launch the game. Your existing camera addons will automatically detect the CVars and function perfectly out-of-the-box!
+
+---
+
+## Usage
+
+1. Download the latest `CameraReforged.exe` from the [Releases](https://github.com/Zendevve/CameraReforged/releases) page.
+2. Place the executable next to your `WoW.exe`.
+3. Double-click to launch the dark-themed GUI.
+4. Set your default settings, and click **Apply Patch**.
+5. To change settings without patching again:
+   - Either adjust the sliders and click **Update Settings** in the GUI.
+   - Or change them inside the game using the `/console` commands listed above.
+6. To restore the original executable, click **Restore Backup** in the GUI.
+
+---
+
+## Technical Details
+
+CameraReforged modifies the PE header to mark the `.rdata` section as executable and writeable. It utilizes 384 bytes of dead alignment padding at the end of the `.rdata` section to build a code cave containing:
+- Float variables and CVar string definitions.
+- Custom FPU assembly callback routines that intercept CVar updates and store the parsed float value at offset `0x2C` inside the CVar structure.
+- Detour hooks placed at the entry point of `CVars_Initialize` (`0x0051D9B0`) and the camera update routine (`0x006070cb`).
+
+---
+
+## Building from Source
 
 1. Install [Python 3](https://www.python.org/downloads/) and [PyInstaller](https://pyinstaller.org/):
    ```
    pip install pyinstaller
    ```
-2. Build:
+2. Build the standalone executable:
    ```
    pyinstaller --onefile --windowed --name CameraReforged camerareforged.py
    ```
-3. The built `.exe` will be in the `dist/` folder.
-
-## Files
-
-- `camerareforged.py` — GUI application (entry point)
-- `patcher.py` — patching engine (no UI)
-
-## Automated Releases
-
-This project is configured with GitHub Actions to build and publish releases automatically.
-
-To create a new release:
-1. Tag your latest commit with a version number starting with `v` (e.g., `v1.0.0`):
-   ```bash
-   git tag v1.0.0
-   ```
-2. Push the tag to GitHub:
-   ```bash
-   git push origin v1.0.0
-   ```
-
-GitHub Actions will automatically trigger, build the standalone executable (`CameraReforged.exe`) using PyInstaller on a Windows runner, and attach it as a release asset under a new GitHub Release.
-
-
-
+3. The packaged `.exe` will be generated in the `dist/` folder.
