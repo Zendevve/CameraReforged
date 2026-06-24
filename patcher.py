@@ -338,11 +338,11 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
 
     # Get caves
     try:
-        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'text', 140)
+        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'text', 160)
         modify_rdata_exec = False
     except ValueError:
         # Fallback: Find code cave in .rdata and mark it executable
-        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'rdata', 140)
+        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'rdata', 160)
         modify_rdata_exec = True
 
     data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
@@ -435,7 +435,7 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
     asm.jmp_rel32(0x006070d1)
 
     code_bytes = asm.resolve()
-    assert len(code_bytes) <= 140, f"Code size {len(code_bytes)} exceeds functions allocation space!"
+    assert len(code_bytes) <= 160, f"Code size {len(code_bytes)} exceeds functions allocation space!"
 
     # Modify .rdata PE characteristics to include EXECUTE (if using fallback)
     if modify_rdata_exec:
