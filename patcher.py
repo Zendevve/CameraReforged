@@ -193,6 +193,21 @@ def find_existing_cave_va(data, sections, image_base):
     return PATCH_VA + 5 + rel
 
 
+def recover_data_cave(data, sections, image_base):
+    """Recover the data cave address and offset from the patched shoulder read instructions."""
+    try:
+        va = READ_SHOULDER_VAS[0]
+        off = va_to_offset(va, sections, image_base)
+        if len(data) > off + 6 and data[off] == 0xD9 and data[off+1] == 0x05:
+            target_va = struct.unpack_from('<I', data, off + 2)[0]
+            data_cave_va = target_va - CAVE_SHOULDER_VAL_OFFSET
+            data_cave_off = va_to_offset(data_cave_va, sections, image_base)
+            return data_cave_va, data_cave_off
+    except Exception:
+        pass
+    return None, None
+
+
 def get_section_cave(data, sections, image_base, section_name, needed_size):
     """
     Find a cave in a section by looking at the padding between virt_size and raw_size.
@@ -213,25 +228,28 @@ def get_section_cave(data, sections, image_base, section_name, needed_size):
             if aligned_rva + needed_size <= virt_addr + raw_size:
                 cave_va = image_base + aligned_rva
                 cave_off = raw_offset + (aligned_rva - virt_addr)
-                return cave_va, cave_off
+                if cave_off + needed_size <= len(data):
+                    return cave_va, cave_off
             
             # Method 2: Scan the end of the section for a run of 0x00/0xCC/0x90
-            end   = raw_offset + raw_size
-            start = max(raw_offset, end - 4096)
-            run_start = None
-            run_len   = 0
-            for i in range(start, end):
-                if data[i] in (0x00, 0xCC, 0x90):
-                    if run_start is None:
-                        run_start = i
-                    run_len += 1
-                    if run_len >= needed_size:
-                        cave_off = run_start
-                        cave_va = image_base + virt_addr + (cave_off - raw_offset)
-                        return cave_va, cave_off
-                else:
-                    run_start = None
-                    run_len   = 0
+            # Exclude 'data' section because zeroes in the middle of data could be active variables
+            if target in ('text', 'rdata'):
+                end   = min(raw_offset + raw_size, len(data))
+                start = max(raw_offset, end - 4096)
+                run_start = None
+                run_len   = 0
+                for i in range(start, end):
+                    if data[i] in (0x00, 0xCC, 0x90):
+                        if run_start is None:
+                            run_start = i
+                        run_len += 1
+                        if run_len >= needed_size:
+                            cave_off = run_start
+                            cave_va = image_base + virt_addr + (cave_off - raw_offset)
+                            return cave_va, cave_off
+                    else:
+                        run_start = None
+                        run_len   = 0
                     
     raise ValueError(f"Could not find a suitable cave in section '{section_name}' of size {needed_size}")
 
@@ -284,7 +302,12 @@ def check_status(exe_path):
 
         if is_patched_height and is_patched_cvar:
             # Definitive Edition patch
-            data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+            data_cave_va, data_cave_off = recover_data_cave(data, sections, image_base)
+            if data_cave_va is None:
+                try:
+                    data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+                except ValueError:
+                    data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'rdata', 80)
             
             cur_height = struct.unpack_from('<f', data, data_cave_off + CAVE_HEIGHT_VAL_OFFSET)[0]
             cur_shoulder = struct.unpack_from('<f', data, data_cave_off + CAVE_SHOULDER_VAL_OFFSET)[0]
@@ -345,15 +368,28 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
             raise ValueError(f"Unexpected bytes at shoulder read site {va:#010x}.")
 
     # Get caves
-    try:
-        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'text', 160)
-        modify_rdata_exec = False
-    except ValueError:
-        # Fallback: Find code cave in .rdata and mark it executable
-        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'rdata', 160)
-        modify_rdata_exec = True
+    modify_rdata_exec = False
+    modify_rdata_write = False
 
-    data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+    try:
+        # 1. Try to find code cave in .text (160 bytes)
+        code_cave_va, code_cave_off = get_section_cave(data, sections, image_base, 'text', 160)
+        # If code cave is in .text, we try to find data cave in .data
+        try:
+            data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+        except ValueError:
+            # Fallback: find data cave in .rdata (80 bytes) and mark .rdata writeable
+            data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'rdata', 80)
+            modify_rdata_write = True
+    except ValueError:
+        # Fallback: code cave must be in .rdata. To prevent overlap, allocate a combined 240-byte cave in .rdata!
+        combined_cave_va, combined_cave_off = get_section_cave(data, sections, image_base, 'rdata', 240)
+        code_cave_va = combined_cave_va
+        code_cave_off = combined_cave_off
+        data_cave_va = combined_cave_va + 160
+        data_cave_off = combined_cave_off + 160
+        modify_rdata_exec = True
+        modify_rdata_write = True
 
     # Format strings
     max_factor_str = f"{max_distance:.2f}".encode('ascii').ljust(8, b'\x00')
@@ -445,8 +481,8 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
     code_bytes = asm.resolve()
     assert len(code_bytes) <= 160, f"Code size {len(code_bytes)} exceeds functions allocation space!"
 
-    # Modify .rdata PE characteristics to include EXECUTE (if using fallback)
-    if modify_rdata_exec:
+    # Modify .rdata PE characteristics (if using fallback for code or data cave)
+    if modify_rdata_exec or modify_rdata_write:
         e_lfanew = struct.unpack_from('<I', data, 0x3C)[0]
         coff = e_lfanew + 4
         optional_size = struct.unpack_from('<H', data, coff + 16)[0]
@@ -462,7 +498,10 @@ def apply_patch(exe_path, height=0.5, shoulder=0.0, max_distance=2.6, zoom_speed
                 break
         if rdata_hdr_off is not None:
             charac = struct.unpack_from('<I', data, rdata_hdr_off + 36)[0]
-            charac |= 0x20000000 # EXECUTE
+            if modify_rdata_exec:
+                charac |= 0x20000000 # EXECUTE
+            if modify_rdata_write:
+                charac |= 0x80000000 # WRITE
             struct.pack_into('<I', data, rdata_hdr_off + 36, charac)
 
     # Patch instructions:
@@ -525,7 +564,12 @@ def update_values(exe_path, height, shoulder, max_distance, zoom_speed):
     if data[patch_off] != 0xE9 or data[cvar_init_off] != 0xE9:
         raise ValueError("Not patched yet. Apply the patch first.")
 
-    data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+    data_cave_va, data_cave_off = recover_data_cave(data, sections, image_base)
+    if data_cave_va is None:
+        try:
+            data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'data', 80)
+        except ValueError:
+            data_cave_va, data_cave_off = get_section_cave(data, sections, image_base, 'rdata', 80)
 
     # Backup
     backup = exe_path + '.bak'
